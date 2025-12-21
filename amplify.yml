@@ -1,0 +1,25 @@
+version: 1
+applications:
+  - appRoot: app
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm ci
+        build:
+          commands:
+            # 環境変数が本当に入っているかチェック（値は表示しない）
+            - test -n "$GEMINI_API_KEY" || (echo "GEMINI_API_KEY is not set" && exit 1)
+
+            # Next.jsが読む .env.production をビルド時に生成（appRoot配下で実行される）
+            - echo "GEMINI_API_KEY=$GEMINI_API_KEY" > .env.production
+
+            - npm run build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*
