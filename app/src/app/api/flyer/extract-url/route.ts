@@ -576,6 +576,7 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => null);
   const mode = body?.mode === 'ingredients' ? 'ingredients' : 'all';
+  const maxTiles = Number(body?.maxTiles ?? process.env.FLYER_MAX_TILES ?? '200');
 
   const storeId = body?.storeId as StoreId | undefined;
   const urls = (body?.urls ?? (body?.url ? [body.url] : [])) as unknown;
@@ -702,7 +703,7 @@ export async function POST(req: Request) {
 
   // 2) タイル化
   const tiles: Tile[] = [];
-  const maxTilesTotal = Number(process.env.FLYER_MAX_TILES ?? '200');
+  const maxTilesTotal = maxTiles;
 
   for (let i = 0; i < pagePngs.length; i++) {
     const pageTiles = await tileImagePng(pagePngs[i], i, 1024, 96, maxTilesTotal - tiles.length);
@@ -751,10 +752,11 @@ export async function POST(req: Request) {
   const map = new Map<string, FlyerItem>();
   for (const it of allItems) map.set(makeDedupKey(it), it);
   const items = Array.from(map.values());
+  const limitedItems = mode === 'ingredients' ? items.slice(0, 30) : items;
 
   return NextResponse.json({
-    items,
-    count: items.length,
+    items: limitedItems,
+    count: limitedItems.length,
     meta: {
       model: modelName,
       pages: pagePngs.length,

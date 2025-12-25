@@ -72,6 +72,8 @@ const STORES: Store[] = [
   },
 ];
 
+const AUTO_MAX_TILES = 80;
+
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
@@ -186,8 +188,8 @@ export default function Page() {
         .filter((c) => c.kind === 'page')
         .map((c) => decodeLooseAmp(c.url));
 
-      // 2) イトーヨーカドーは常に resolve を挟む（Playwrightを必ず通す）
-      const shouldResolve = (storeId === 'itoyokado_kawasaki' && pageUrls.length > 0) || (urls.length === 0 && pageUrls.length > 0);
+      // 2) イトーヨーカドーは resolve を挟まない（Playwright不要化）
+      const shouldResolve = storeId !== 'itoyokado_kawasaki' && urls.length === 0 && pageUrls.length > 0;
       if (shouldResolve) {
         const bestPage = pickBestPageUrl(pageUrls);
 
@@ -227,6 +229,8 @@ export default function Page() {
 
         urls.length = 0;
         urls.push(...resolvedUrls);
+      } else if (storeId === 'itoyokado_kawasaki' && pageUrls.length > 0) {
+        urls.push(...pageUrls);
       }
 
       if (urls.length === 0) {
@@ -241,7 +245,7 @@ export default function Page() {
       const eRes = await fetch('/api/flyer/extract-url', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ storeId, urls, mode: 'all' }),
+        body: JSON.stringify({ storeId, urls, mode: 'all', maxTiles: AUTO_MAX_TILES }),
         signal: ac.signal,
       });
 
@@ -310,8 +314,7 @@ export default function Page() {
         .filter((c) => c.kind === 'page')
         .map((c) => decodeLooseAmp(c.url));
 
-      const shouldResolve =
-        (storeId === 'itoyokado_kawasaki' && pageUrls.length > 0) || (urls.length === 0 && pageUrls.length > 0);
+      const shouldResolve = storeId !== 'itoyokado_kawasaki' && urls.length === 0 && pageUrls.length > 0;
       if (shouldResolve) {
         const bestPage = pickBestPageUrl(pageUrls);
 
@@ -351,6 +354,8 @@ export default function Page() {
 
         urls.length = 0;
         urls.push(...resolvedUrls);
+      } else if (storeId === 'itoyokado_kawasaki' && pageUrls.length > 0) {
+        urls.push(...pageUrls);
       }
 
       if (urls.length === 0) {
@@ -364,7 +369,7 @@ export default function Page() {
       const eRes = await fetch('/api/flyer/extract-url', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ storeId, urls, mode: 'ingredients' }),
+        body: JSON.stringify({ storeId, urls, mode: 'ingredients', maxTiles: AUTO_MAX_TILES }),
         signal: ac.signal,
       });
 
@@ -650,6 +655,7 @@ export default function Page() {
                   const count = getAutoItemsCount(s.id);
                   const mode = autoModeByStore[s.id];
                   const isLoading = st?.state === 'loading';
+                  const isDone = st?.state === 'done';
                   const isAllActive = mode === 'all';
                   const isIngredientsActive = mode === 'ingredients';
 
@@ -680,10 +686,10 @@ export default function Page() {
                           <button
                             type="button"
                             onClick={() => handleAutoFetchMode(s.id, 'all')}
-                            disabled={isLoading}
+                            disabled={isLoading || isDone}
                             className={cx(
                               'rounded-full border px-3 py-1 text-xs transition',
-                              !isLoading
+                              !isLoading && !isDone
                                 ? 'border-zinc-700 bg-zinc-900/60 text-zinc-100 hover:bg-zinc-800'
                                 : 'cursor-not-allowed border-zinc-800 bg-zinc-900/40 text-zinc-500'
                             )}
@@ -693,10 +699,10 @@ export default function Page() {
                           <button
                             type="button"
                             onClick={() => handleAutoFetchMode(s.id, 'ingredients')}
-                            disabled={isLoading}
+                            disabled={isLoading || isDone}
                             className={cx(
                               'rounded-full border px-3 py-1 text-xs transition',
-                              !isLoading
+                              !isLoading && !isDone
                                 ? 'border-emerald-800/60 bg-emerald-950/30 text-emerald-200 hover:bg-emerald-900/40'
                                 : 'cursor-not-allowed border-zinc-800 bg-zinc-900/40 text-zinc-500'
                             )}

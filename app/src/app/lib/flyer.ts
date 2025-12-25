@@ -65,6 +65,7 @@ export function buildFlyerIngredientExtractPrompt(args: { tileIndex: number; til
 - priceYen は「数字のみ」。税抜/税込/条件は notes に書く。
 - チラシに無い商品を創作しない。読めない場合は name に「判読不能」を含め、notes に理由を書く。
 - 重複は避ける（同一商品・同一価格・同一規格は1つにまとめる）。ただし別規格/別価格は別アイテム。
+- 同一タイル内で多すぎる場合は、より大きく表示されている商品を優先して列挙する。
 
 【出力】
 - 次のJSON“だけ”を返す（説明文やmarkdown禁止）:

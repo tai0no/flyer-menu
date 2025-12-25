@@ -252,10 +252,11 @@ export async function POST(req: Request) {
   }
 
   const items = Array.from(map.values());
+  const limitedItems = mode === 'ingredients' ? items.slice(0, 30) : items;
 
   return NextResponse.json({
-    items,
-    count: items.length,
+    items: limitedItems,
+    count: limitedItems.length,
     meta: {
       model: modelName,
       pages: pagePngs.length,
