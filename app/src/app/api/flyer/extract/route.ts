@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 
 import {
   buildFlyerExtractPrompt,
+  buildFlyerIngredientExtractPrompt,
   safeParseJsonFromModel,
   normalizeFlyerItem,
   makeDedupKey,
@@ -107,13 +108,17 @@ async function callGeminiForTile(args: {
   tile: Tile;
   tileIndexGlobal: number;
   tileCountGlobal: number;
+  mode: 'all' | 'ingredients';
 }) {
-  const { apiKey, modelName, maxOutputTokens, tile, tileIndexGlobal, tileCountGlobal } = args;
+  const { apiKey, modelName, maxOutputTokens, tile, tileIndexGlobal, tileCountGlobal, mode } = args;
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 
-  const prompt = buildFlyerExtractPrompt({ tileIndex: tileIndexGlobal, tileCount: tileCountGlobal });
+  const prompt =
+    mode === 'ingredients'
+      ? buildFlyerIngredientExtractPrompt({ tileIndex: tileIndexGlobal, tileCount: tileCountGlobal })
+      : buildFlyerExtractPrompt({ tileIndex: tileIndexGlobal, tileCount: tileCountGlobal });
 
   const result = await model.generateContent({
     contents: [
@@ -164,6 +169,9 @@ export async function POST(req: Request) {
 
   const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
   const maxOutputTokens = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS ?? '8192');
+
+  const modeParam = new URL(req.url).searchParams.get('mode');
+  const mode = modeParam === 'ingredients' ? 'ingredients' : 'all';
 
   const form = await req.formData();
   const file = form.get('file');
@@ -223,6 +231,7 @@ export async function POST(req: Request) {
         tile: tiles[i],
         tileIndexGlobal: i + 1,
         tileCountGlobal: tiles.length,
+        mode,
       });
 
       for (const r of itemsRaw) {

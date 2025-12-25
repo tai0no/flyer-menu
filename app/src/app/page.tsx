@@ -110,6 +110,12 @@ export default function Page() {
   const [flyerExtracting, setFlyerExtracting] = useState(false);
   const [flyerError, setFlyerError] = useState<string | null>(null);
   const [flyerResult, setFlyerResult] = useState<FlyerExtractResponse | null>(null);
+  const [flyerIngredientExtracting, setFlyerIngredientExtracting] = useState(false);
+  const [flyerIngredientError, setFlyerIngredientError] = useState<string | null>(null);
+  const [flyerIngredientResult, setFlyerIngredientResult] = useState<FlyerExtractResponse | null>(null);
+  const flyerAbortRef = useRef<AbortController | null>(null);
+  const flyerIngredientAbortRef = useRef<AbortController | null>(null);
+  const [flyerMode, setFlyerMode] = useState<'all' | 'ingredients' | null>(null);
 
   // ✅ 自動取得（チェックONでWeb→discover→(resolve)→extract-url）
   const [autoFlyerByStore, setAutoFlyerByStore] = useState<Partial<Record<Store['id'], FlyerExtractResponse>>>({});
@@ -117,6 +123,11 @@ export default function Page() {
     life_kawasaki_oshima: { state: 'idle' },
     aoba_oshima: { state: 'idle' },
     itoyokado_kawasaki: { state: 'idle' },
+  });
+  const [autoModeByStore, setAutoModeByStore] = useState<Record<Store['id'], 'all' | 'ingredients' | null>>({
+    life_kawasaki_oshima: null,
+    aoba_oshima: null,
+    itoyokado_kawasaki: null,
   });
 
   const abortRef = useRef<Partial<Record<Store['id'], AbortController>>>({});
@@ -144,6 +155,10 @@ export default function Page() {
     setAutoStateByStore((prevState) => ({
       ...prevState,
       [storeId]: { state: 'loading' },
+    }));
+    setAutoModeByStore((prevMode) => ({
+      ...prevMode,
+      [storeId]: 'all',
     }));
 
     try {
@@ -226,7 +241,7 @@ export default function Page() {
       const eRes = await fetch('/api/flyer/extract-url', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ storeId, urls }),
+        body: JSON.stringify({ storeId, urls, mode: 'all' }),
         signal: ac.signal,
       });
 
@@ -257,32 +272,139 @@ export default function Page() {
     }
   };
 
-  const handleStoreCheckChange = (storeId: Store['id'], nextChecked: boolean) => {
-    setSelectedStoreIds((prev) => {
-      const next = new Set(prev);
-      if (nextChecked) next.add(storeId);
-      else next.delete(storeId);
-      return next;
-    });
+  const startAutoFetchIngredientsForStore = async (storeId: Store['id']) => {
+    const prev = abortRef.current[storeId];
+    if (prev) prev.abort();
 
-    if (nextChecked) {
-      // ✅ チェックONになった瞬間に、バックグラウンドで自動取得開始
-      startAutoFetchForStore(storeId);
-    } else {
-      // ✅ チェックOFFなら、その店舗の処理を中断＆結果を消す
-      const prev = abortRef.current[storeId];
-      if (prev) prev.abort();
+    const ac = new AbortController();
+    abortRef.current[storeId] = ac;
 
-      setAutoFlyerByStore((prevMap) => {
-        const next = { ...prevMap };
-        delete next[storeId];
-        return next;
+    setAutoStateByStore((prevState) => ({
+      ...prevState,
+      [storeId]: { state: 'loading' },
+    }));
+    setAutoModeByStore((prevMode) => ({
+      ...prevMode,
+      [storeId]: 'ingredients',
+    }));
+
+    try {
+      const dRes = await fetch('/api/flyer/discover', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ storeId }),
+        signal: ac.signal,
       });
+
+      const dJson = (await dRes.json().catch(() => null)) as FlyerDiscoverResponse | null;
+
+      if (!dRes.ok || !dJson) {
+        throw new Error(dJson ? JSON.stringify(dJson) : `discover failed (${dRes.status})`);
+      }
+
+      const urls: string[] = (dJson.candidates ?? [])
+        .filter((c) => c.kind === 'image' || c.kind === 'pdf')
+        .map((c) => decodeLooseAmp(c.url));
+
+      const pageUrls: string[] = (dJson.candidates ?? [])
+        .filter((c) => c.kind === 'page')
+        .map((c) => decodeLooseAmp(c.url));
+
+      const shouldResolve =
+        (storeId === 'itoyokado_kawasaki' && pageUrls.length > 0) || (urls.length === 0 && pageUrls.length > 0);
+      if (shouldResolve) {
+        const bestPage = pickBestPageUrl(pageUrls);
+
+        const rRes = await fetch('/api/flyer/resolve', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ storeId, pageUrl: bestPage }),
+          signal: ac.signal,
+        });
+
+        const rJson = (await rRes.json().catch(() => null)) as FlyerResolveResponse | null;
+
+        if (!rRes.ok || !rJson) {
+          throw new Error(rJson ? JSON.stringify(rJson) : `resolve failed (${rRes.status})`);
+        }
+
+        let resolvedUrls: string[] = (rJson.candidates ?? [])
+          .filter((c) => c.kind === 'image' || c.kind === 'pdf')
+          .map((c) => decodeLooseAmp(c.url));
+
+        if (storeId === 'life_kawasaki_oshima') {
+          resolvedUrls = resolvedUrls.slice(0, 2);
+        }
+
+        if (resolvedUrls.length === 0) {
+          setAutoStateByStore((prevState) => ({
+            ...prevState,
+            [storeId]: {
+              state: 'error',
+              message:
+                (rJson.warnings?.[0] ?? '') ||
+                'チラシページは取得できたが、画像/PDF URLに展開できませんでした（動的の可能性）',
+            },
+          }));
+          return;
+        }
+
+        urls.length = 0;
+        urls.push(...resolvedUrls);
+      }
+
+      if (urls.length === 0) {
+        setAutoStateByStore((prevState) => ({
+          ...prevState,
+          [storeId]: { state: 'error', message: 'チラシ候補URLが見つかりませんでした。' },
+        }));
+        return;
+      }
+
+      const eRes = await fetch('/api/flyer/extract-url', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ storeId, urls, mode: 'ingredients' }),
+        signal: ac.signal,
+      });
+
+      const eJson = (await eRes.json().catch(() => null)) as FlyerExtractResponse | null;
+
+      if (!eRes.ok || !eJson || typeof eJson !== 'object') {
+        throw new Error(eJson ? JSON.stringify(eJson) : `extract-url failed (${eRes.status})`);
+      }
+
+      setAutoFlyerByStore((prevMap) => ({
+        ...prevMap,
+        [storeId]: eJson,
+      }));
 
       setAutoStateByStore((prevState) => ({
         ...prevState,
-        [storeId]: { state: 'idle' },
+        [storeId]: { state: 'done' },
       }));
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+
+      console.error(e);
+      setAutoStateByStore((prevState) => ({
+        ...prevState,
+        [storeId]: { state: 'error', message: e?.message ?? '自動取得に失敗しました' },
+      }));
+    }
+  };
+
+  const handleAutoFetchMode = (storeId: Store['id'], mode: 'all' | 'ingredients') => {
+    setSelectedStoreIds((prev) => {
+      const next = new Set(prev);
+      next.add(storeId);
+      return next;
+    });
+
+    if (mode === 'all') {
+      startAutoFetchForStore(storeId);
+    } else {
+      startAutoFetchIngredientsForStore(storeId);
     }
   };
 
@@ -312,7 +434,16 @@ export default function Page() {
         return Array.isArray(it) ? it : [];
       });
 
-      const uploadItems = Array.isArray(flyerResult?.items) ? flyerResult.items : [];
+      const uploadItems =
+        flyerMode === 'ingredients'
+          ? Array.isArray(flyerIngredientResult?.items)
+            ? flyerIngredientResult.items
+            : []
+          : flyerMode === 'all'
+            ? Array.isArray(flyerResult?.items)
+              ? flyerResult.items
+              : []
+            : [];
 
       const res = await fetch('/api/plan', {
         method: 'POST',
@@ -352,12 +483,16 @@ export default function Page() {
     setFlyerError(null);
     setFlyerResult(null);
 
+    if (flyerAbortRef.current) flyerAbortRef.current.abort();
+
     if (!flyerFile) {
       setFlyerError('チラシファイル（PDF/画像）を選択してください。');
       return;
     }
 
     setFlyerExtracting(true);
+    const ac = new AbortController();
+    flyerAbortRef.current = ac;
 
     try {
       const formData = new FormData();
@@ -366,6 +501,7 @@ export default function Page() {
       const res = await fetch('/api/flyer/extract', {
         method: 'POST',
         body: formData,
+        signal: ac.signal,
       });
 
       const data = await res.json().catch(() => null);
@@ -382,11 +518,62 @@ export default function Page() {
       }
 
       setFlyerResult(data as FlyerExtractResponse);
+      setFlyerMode('all');
     } catch (e) {
+      if ((e as any)?.name === 'AbortError') return;
       setFlyerError('通信に失敗しました。ターミナルのログも確認してください。');
       console.error(e);
     } finally {
       setFlyerExtracting(false);
+    }
+  };
+
+  const handleExtractFlyerIngredients = async () => {
+    setFlyerIngredientError(null);
+    setFlyerIngredientResult(null);
+
+    if (flyerIngredientAbortRef.current) flyerIngredientAbortRef.current.abort();
+
+    if (!flyerFile) {
+      setFlyerIngredientError('チラシファイル（PDF/画像）を選択してください。');
+      return;
+    }
+
+    setFlyerIngredientExtracting(true);
+    const ac = new AbortController();
+    flyerIngredientAbortRef.current = ac;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', flyerFile);
+
+      const res = await fetch('/api/flyer/extract?mode=ingredients', {
+        method: 'POST',
+        body: formData,
+        signal: ac.signal,
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setFlyerIngredientError(data?.error ?? `APIエラー（${res.status}）`);
+        return;
+      }
+
+      if (!data || typeof data !== 'object') {
+        setFlyerIngredientError('APIの形式が想定と違います（JSONではありません）。');
+        console.log('Unexpected response from /api/flyer/extract?mode=ingredients:', data);
+        return;
+      }
+
+      setFlyerIngredientResult(data as FlyerExtractResponse);
+      setFlyerMode('ingredients');
+    } catch (e) {
+      if ((e as any)?.name === 'AbortError') return;
+      setFlyerIngredientError('通信に失敗しました。ターミナルのログも確認してください。');
+      console.error(e);
+    } finally {
+      setFlyerIngredientExtracting(false);
     }
   };
 
@@ -402,9 +589,16 @@ export default function Page() {
     abortRef.current = {};
 
     // チラシ関連もリセット
+    flyerAbortRef.current?.abort();
+    flyerIngredientAbortRef.current?.abort();
     setFlyerFile(null);
     setFlyerError(null);
     setFlyerResult(null);
+    setFlyerIngredientError(null);
+    setFlyerIngredientResult(null);
+    setFlyerIngredientExtracting(false);
+    setFlyerExtracting(false);
+    setFlyerMode(null);
 
     setAutoFlyerByStore({});
     setAutoStateByStore({
@@ -412,10 +606,21 @@ export default function Page() {
       aoba_oshima: { state: 'idle' },
       itoyokado_kawasaki: { state: 'idle' },
     });
+    setAutoModeByStore({
+      life_kawasaki_oshima: null,
+      aoba_oshima: null,
+      itoyokado_kawasaki: null,
+    });
   };
 
   const flyerItemsCount = Array.isArray(flyerResult?.items) ? flyerResult!.items!.length : 0;
   const flyerWarnings = Array.isArray(flyerResult?.warnings) ? (flyerResult!.warnings as string[]) : [];
+  const flyerIngredientItemsCount = Array.isArray(flyerIngredientResult?.items)
+    ? flyerIngredientResult!.items!.length
+    : 0;
+  const flyerIngredientWarnings = Array.isArray(flyerIngredientResult?.warnings)
+    ? (flyerIngredientResult!.warnings as string[])
+    : [];
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-50">
@@ -435,7 +640,7 @@ export default function Page() {
             <div className="mt-5">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-zinc-200">スーパー選択（MVP固定）</label>
-                <span className="text-xs text-zinc-400">※ チェックONで自動取得（裏で進む）</span>
+                <span className="text-xs text-zinc-400">※ 抽出モードを選択して実行</span>
               </div>
 
               <div className="mt-3 space-y-2">
@@ -443,51 +648,76 @@ export default function Page() {
                   const checked = selectedStoreIds.has(s.id);
                   const st = autoStateByStore[s.id];
                   const count = getAutoItemsCount(s.id);
+                  const mode = autoModeByStore[s.id];
+                  const isLoading = st?.state === 'loading';
+                  const isAllActive = mode === 'all';
+                  const isIngredientsActive = mode === 'ingredients';
 
                   return (
-                    <label
+                    <div
                       key={s.id}
                       className={cx(
-                        'flex cursor-pointer items-start justify-between gap-3 rounded-xl border p-3 transition',
+                        'flex items-start justify-between gap-3 rounded-xl border p-3 transition',
                         checked
                           ? 'border-zinc-500 bg-zinc-800/60'
                           : 'border-zinc-800 bg-zinc-950/40 hover:bg-zinc-900/50'
                       )}
                     >
                       {/* Left */}
-                      <div className="flex min-w-0 items-start gap-3">
-                        <input
-                          type="checkbox"
-                          className="mt-1 h-4 w-4 accent-zinc-200"
-                          checked={checked}
-                          onChange={(e) => handleStoreCheckChange(s.id, e.target.checked)}
-                        />
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium">{s.label}</div>
-                          <div className="mt-1 truncate text-xs text-zinc-400">{s.url}</div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">{s.label}</div>
+                        <div className="mt-1 truncate text-xs text-zinc-400">{s.url}</div>
 
-                          {/* 失敗時だけ、簡易メッセージ（入力は止めない） */}
-                          {checked && st?.state === 'error' && (
-                            <div className="mt-2 text-xs text-red-300">{st.message ?? '自動取得に失敗しました'}</div>
-                          )}
-                        </div>
+                        {/* 失敗時だけ、簡易メッセージ（入力は止めない） */}
+                        {checked && st?.state === 'error' && (
+                          <div className="mt-2 text-xs text-red-300">{st.message ?? '自動取得に失敗しました'}</div>
+                        )}
                       </div>
 
                       {/* Right (spinner / status) */}
-                      <div className="ml-3 flex shrink-0 items-center gap-2">
-                        {checked && st?.state === 'loading' && <Spinner title="チラシ取得中…" />}
+                      <div className="ml-3 flex shrink-0 flex-col items-end gap-2">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleAutoFetchMode(s.id, 'all')}
+                            disabled={isLoading}
+                            className={cx(
+                              'rounded-full border px-3 py-1 text-xs transition',
+                              !isLoading
+                                ? 'border-zinc-700 bg-zinc-900/60 text-zinc-100 hover:bg-zinc-800'
+                                : 'cursor-not-allowed border-zinc-800 bg-zinc-900/40 text-zinc-500'
+                            )}
+                          >
+                            {isAllActive && isLoading ? '抽出中…' : 'チラシ全体'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAutoFetchMode(s.id, 'ingredients')}
+                            disabled={isLoading}
+                            className={cx(
+                              'rounded-full border px-3 py-1 text-xs transition',
+                              !isLoading
+                                ? 'border-emerald-800/60 bg-emerald-950/30 text-emerald-200 hover:bg-emerald-900/40'
+                                : 'cursor-not-allowed border-zinc-800 bg-zinc-900/40 text-zinc-500'
+                            )}
+                          >
+                            {isIngredientsActive && isLoading ? '抽出中…' : '食材だけ'}
+                          </button>
+                        </div>
+
                         {checked && st?.state === 'done' && (
                           <span className="rounded-full border border-zinc-700 bg-zinc-900/60 px-2 py-1 text-xs text-zinc-200">
                             {count}件
                           </span>
                         )}
+
                         {checked && st?.state === 'error' && (
                           <span className="rounded-full border border-red-900/60 bg-red-950/20 px-2 py-1 text-xs text-red-200">
                             !
                           </span>
                         )}
                       </div>
-                    </label>
+                    </div>
                   );
                 })}
               </div>
@@ -542,6 +772,20 @@ export default function Page() {
                   {flyerExtracting ? '抽出中…' : 'チラシを抽出（β）'}
                 </button>
 
+                <button
+                  type="button"
+                  onClick={handleExtractFlyerIngredients}
+                  disabled={!flyerFile || flyerIngredientExtracting}
+                  className={cx(
+                    'rounded-xl px-4 py-2 text-sm font-medium transition',
+                    flyerFile && !flyerIngredientExtracting
+                      ? 'bg-emerald-200 text-emerald-950 hover:bg-emerald-100'
+                      : 'cursor-not-allowed bg-zinc-800 text-zinc-500'
+                  )}
+                >
+                  {flyerIngredientExtracting ? '抽出中…' : '食材だけ抽出（β）'}
+                </button>
+
                 {flyerFile && (
                   <span className="text-xs text-zinc-400">
                     {flyerFile.name}（{Math.round(flyerFile.size / 1024)} KB）
@@ -578,6 +822,38 @@ export default function Page() {
               {flyerError && (
                 <div className="mt-3 rounded-xl border border-red-900/60 bg-red-950/30 p-3 text-sm text-red-200">
                   {flyerError}
+                </div>
+              )}
+
+              {flyerIngredientResult && (
+                <div className="mt-6 rounded-2xl border border-emerald-900/40 bg-emerald-950/20 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold">食材だけ抽出結果（手動アップロード）</div>
+                    <div className="text-xs text-emerald-200">Gemini Vision</div>
+                  </div>
+
+                  <div className="mt-2 text-xs text-emerald-200">items: {flyerIngredientItemsCount} 件</div>
+
+                  {flyerIngredientWarnings.length > 0 && (
+                    <div className="mt-3 rounded-xl border border-amber-900/50 bg-amber-950/20 p-3 text-xs text-amber-200">
+                      <div className="font-semibold">warnings</div>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {flyerIngredientWarnings.map((w, i) => (
+                          <li key={i}>{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <pre className="mt-3 max-h-64 overflow-auto rounded-xl border border-emerald-900/40 bg-emerald-950/10 p-3 text-xs text-emerald-100">
+                    {JSON.stringify(flyerIngredientResult, null, 2)}
+                  </pre>
+                </div>
+              )}
+
+              {flyerIngredientError && (
+                <div className="mt-3 rounded-xl border border-red-900/60 bg-red-950/30 p-3 text-sm text-red-200">
+                  {flyerIngredientError}
                 </div>
               )}
             </div>

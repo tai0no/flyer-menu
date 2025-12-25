@@ -42,6 +42,38 @@ export function buildFlyerExtractPrompt(args: { tileIndex: number; tileCount: nu
 `.trim();
 }
 
+export function buildFlyerIngredientExtractPrompt(args: { tileIndex: number; tileCount: number }) {
+  const { tileIndex, tileCount } = args;
+
+  return `
+あなたは「スーパーチラシ」から食材だけを抽出するエンジンです。
+これはチラシ全体のうちのタイル ${tileIndex}/${tileCount} です。このタイル内に見える商品だけを抽出してください。
+
+【目的】
+- このタイルに掲載されている「食材（料理に使う生鮮・素材）」を可能な限り漏れなく列挙する。
+
+【除外】
+- 惣菜（弁当、総菜、揚げ物、出来合い、寿司、サラダ惣菜）
+- 調味料（醤油、みそ、砂糖、塩、だし、酢、ソース類、ドレッシング、油）
+- 菓子、飲料、酒、日用品
+
+【抽出ルール】
+- 対象: 価格（円）が書かれている食材。セット価格、会員価格、クーポン価格、○%OFF 等も含める。
+- 対象カテゴリの目安: 精肉 / 鮮魚 / 青果 / 卵 / 乳製品 / 豆腐・豆類 / 米・麺
+- 迷う場合は notes に「要確認」を付け、category は推定でOK。
+- 商品名はできるだけ具体的に：ブランド/部位/産地/規格/内容量（100g, 1パック等）を name / unit / notes に反映する。短縮しない。
+- priceYen は「数字のみ」。税抜/税込/条件は notes に書く。
+- チラシに無い商品を創作しない。読めない場合は name に「判読不能」を含め、notes に理由を書く。
+- 重複は避ける（同一商品・同一価格・同一規格は1つにまとめる）。ただし別規格/別価格は別アイテム。
+
+【出力】
+- 次のJSON“だけ”を返す（説明文やmarkdown禁止）:
+{
+  "items": FlyerItem[]
+}
+`.trim();
+}
+
 export function safeParseJsonFromModel(text: string): any {
   // ```json ... ``` 対策 + 余計な前置き対策
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);

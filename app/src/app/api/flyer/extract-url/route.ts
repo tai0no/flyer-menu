@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 
 import {
   buildFlyerExtractPrompt,
+  buildFlyerIngredientExtractPrompt,
   safeParseJsonFromModel,
   normalizeFlyerItem,
   makeDedupKey,
@@ -513,13 +514,17 @@ async function callGeminiForTile(args: {
   tile: Tile;
   tileIndexGlobal: number;
   tileCountGlobal: number;
+  mode: 'all' | 'ingredients';
 }) {
-  const { apiKey, modelName, maxOutputTokens, tile, tileIndexGlobal, tileCountGlobal } = args;
+  const { apiKey, modelName, maxOutputTokens, tile, tileIndexGlobal, tileCountGlobal, mode } = args;
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 
-  const prompt = buildFlyerExtractPrompt({ tileIndex: tileIndexGlobal, tileCount: tileCountGlobal });
+  const prompt =
+    mode === 'ingredients'
+      ? buildFlyerIngredientExtractPrompt({ tileIndex: tileIndexGlobal, tileCount: tileCountGlobal })
+      : buildFlyerExtractPrompt({ tileIndex: tileIndexGlobal, tileCount: tileCountGlobal });
 
   const result = await model.generateContent({
     contents: [
@@ -570,6 +575,7 @@ export async function POST(req: Request) {
   const maxOutputTokens = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS ?? '8192');
 
   const body = await req.json().catch(() => null);
+  const mode = body?.mode === 'ingredients' ? 'ingredients' : 'all';
 
   const storeId = body?.storeId as StoreId | undefined;
   const urls = (body?.urls ?? (body?.url ? [body.url] : [])) as unknown;
@@ -727,6 +733,7 @@ export async function POST(req: Request) {
         tile: tiles[i],
         tileIndexGlobal: i + 1,
         tileCountGlobal: tiles.length,
+        mode,
       });
 
       for (const r of itemsRaw) {
