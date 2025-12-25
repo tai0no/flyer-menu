@@ -289,12 +289,16 @@ export default function Page() {
         if (Array.isArray(eJson.items)) mergedItems.push(...eJson.items);
         lastJson = eJson;
         tileStart = typeof eJson.nextTileStart === 'number' ? eJson.nextTileStart : null;
+        const tilesFromMeta = (() => {
+          const meta = (eJson as { meta?: { tiles?: unknown } }).meta;
+          return typeof meta?.tiles === 'number' ? meta.tiles : null;
+        })();
         setAutoProgressByStore((prev) => ({
           ...prev,
           [storeId]: {
             items: mergedItems.length,
             tileStart,
-            tiles: typeof eJson.meta?.tiles === 'number' ? eJson.meta.tiles : prev[storeId]?.tiles ?? 0,
+            tiles: tilesFromMeta ?? prev[storeId]?.tiles ?? 0,
           },
         }));
       }
@@ -453,12 +457,16 @@ export default function Page() {
         if (Array.isArray(eJson.items)) mergedItems.push(...eJson.items);
         lastJson = eJson;
         tileStart = typeof eJson.nextTileStart === 'number' ? eJson.nextTileStart : null;
+        const tilesFromMeta = (() => {
+          const meta = (eJson as { meta?: { tiles?: unknown } }).meta;
+          return typeof meta?.tiles === 'number' ? meta.tiles : null;
+        })();
         setAutoProgressByStore((prev) => ({
           ...prev,
           [storeId]: {
             items: mergedItems.length,
             tileStart,
-            tiles: typeof eJson.meta?.tiles === 'number' ? eJson.meta.tiles : prev[storeId]?.tiles ?? 0,
+            tiles: tilesFromMeta ?? prev[storeId]?.tiles ?? 0,
           },
         }));
       }
