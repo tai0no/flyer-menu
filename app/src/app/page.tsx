@@ -75,6 +75,7 @@ const STORES: Store[] = [
 const AUTO_MAX_TILES = 80;
 const AUTO_MAX_TILES_LIGHT = 40;
 const AUTO_MAX_URLS_LIGHT = 2;
+const AUTO_TILE_CHUNK = 12;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -249,23 +250,46 @@ export default function Page() {
         urls.length = Math.min(urls.length, AUTO_MAX_URLS_LIGHT);
       }
 
-      const eRes = await fetch('/api/flyer/extract-url', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ storeId, urls, mode: 'all', maxTiles }),
-        signal: ac.signal,
-      });
+      let tileStart: number | null = 0;
+      const mergedItems: unknown[] = [];
+      let lastJson: FlyerExtractResponse | null = null;
 
-      const eJson = (await eRes.json().catch(() => null)) as FlyerExtractResponse | null;
+      while (tileStart !== null) {
+        const eRes = await fetch('/api/flyer/extract-url', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            storeId,
+            urls,
+            mode: 'all',
+            maxTiles,
+            tileStart,
+            tileLimit: AUTO_TILE_CHUNK,
+          }),
+          signal: ac.signal,
+        });
 
-      if (!eRes.ok || !eJson || typeof eJson !== 'object') {
-        throw new Error(eJson ? JSON.stringify(eJson) : `extract-url failed (${eRes.status})`);
+        const eJson = (await eRes.json().catch(() => null)) as FlyerExtractResponse & { nextTileStart?: number | null } | null;
+
+        if (!eRes.ok || !eJson || typeof eJson !== 'object') {
+          throw new Error(eJson ? JSON.stringify(eJson) : `extract-url failed (${eRes.status})`);
+        }
+
+        if (Array.isArray(eJson.items)) mergedItems.push(...eJson.items);
+        lastJson = eJson;
+        tileStart = typeof eJson.nextTileStart === 'number' ? eJson.nextTileStart : null;
       }
+
+      const mergedResult: FlyerExtractResponse = {
+        ...(lastJson ?? {}),
+        items: mergedItems,
+        count: mergedItems.length,
+      };
 
       // 結果保存（店舗ごと）
       setAutoFlyerByStore((prevMap) => ({
         ...prevMap,
-        [storeId]: eJson,
+        [storeId]: mergedResult,
       }));
 
       setAutoStateByStore((prevState) => ({
@@ -378,22 +402,45 @@ export default function Page() {
         urls.length = Math.min(urls.length, AUTO_MAX_URLS_LIGHT);
       }
 
-      const eRes = await fetch('/api/flyer/extract-url', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ storeId, urls, mode: 'ingredients', maxTiles }),
-        signal: ac.signal,
-      });
+      let tileStart: number | null = 0;
+      const mergedItems: unknown[] = [];
+      let lastJson: FlyerExtractResponse | null = null;
 
-      const eJson = (await eRes.json().catch(() => null)) as FlyerExtractResponse | null;
+      while (tileStart !== null) {
+        const eRes = await fetch('/api/flyer/extract-url', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            storeId,
+            urls,
+            mode: 'ingredients',
+            maxTiles,
+            tileStart,
+            tileLimit: AUTO_TILE_CHUNK,
+          }),
+          signal: ac.signal,
+        });
 
-      if (!eRes.ok || !eJson || typeof eJson !== 'object') {
-        throw new Error(eJson ? JSON.stringify(eJson) : `extract-url failed (${eRes.status})`);
+        const eJson = (await eRes.json().catch(() => null)) as FlyerExtractResponse & { nextTileStart?: number | null } | null;
+
+        if (!eRes.ok || !eJson || typeof eJson !== 'object') {
+          throw new Error(eJson ? JSON.stringify(eJson) : `extract-url failed (${eRes.status})`);
+        }
+
+        if (Array.isArray(eJson.items)) mergedItems.push(...eJson.items);
+        lastJson = eJson;
+        tileStart = typeof eJson.nextTileStart === 'number' ? eJson.nextTileStart : null;
       }
+
+      const mergedResult: FlyerExtractResponse = {
+        ...(lastJson ?? {}),
+        items: mergedItems,
+        count: mergedItems.length,
+      };
 
       setAutoFlyerByStore((prevMap) => ({
         ...prevMap,
-        [storeId]: eJson,
+        [storeId]: mergedResult,
       }));
 
       setAutoStateByStore((prevState) => ({

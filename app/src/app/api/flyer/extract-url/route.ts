@@ -578,6 +578,8 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const mode = body?.mode === 'ingredients' ? 'ingredients' : 'all';
   const maxTiles = Number(body?.maxTiles ?? process.env.FLYER_MAX_TILES ?? '200');
+  const tileStart = Math.max(0, Number(body?.tileStart ?? 0));
+  const tileLimit = Math.max(1, Number(body?.tileLimit ?? 20));
 
   const storeId = body?.storeId as StoreId | undefined;
   const urls = (body?.urls ?? (body?.url ? [body.url] : [])) as unknown;
@@ -725,8 +727,9 @@ export async function POST(req: Request) {
   }
 
   // 3) Gemini 逐次呼び出し（安定優先）
+  const tileEnd = Math.min(tiles.length, tileStart + tileLimit);
   const allItems: FlyerItem[] = [];
-  for (let i = 0; i < tiles.length; i++) {
+  for (let i = tileStart; i < tileEnd; i++) {
     try {
       const { itemsRaw } = await callGeminiForTile({
         apiKey,
@@ -754,10 +757,12 @@ export async function POST(req: Request) {
   for (const it of allItems) map.set(makeDedupKey(it), it);
   const items = Array.from(map.values());
   const limitedItems = mode === 'ingredients' ? items.slice(0, 30) : items;
+  const nextTileStart = tileEnd < tiles.length ? tileEnd : null;
 
   return NextResponse.json({
     items: limitedItems,
     count: limitedItems.length,
+    nextTileStart,
     meta: {
       model: modelName,
       pages: pagePngs.length,
