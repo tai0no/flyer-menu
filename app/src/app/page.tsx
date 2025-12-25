@@ -75,7 +75,7 @@ const STORES: Store[] = [
 const AUTO_MAX_TILES = 80;
 const AUTO_MAX_TILES_LIGHT = 40;
 const AUTO_MAX_URLS_LIGHT = 2;
-const AUTO_TILE_CHUNK = 12;
+const AUTO_TILE_CHUNK = 5;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
