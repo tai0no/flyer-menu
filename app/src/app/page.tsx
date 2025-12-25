@@ -670,71 +670,97 @@ export default function Page() {
                   const isDone = st?.state === 'done';
                   const isAllActive = mode === 'all';
                   const isIngredientsActive = mode === 'ingredients';
+                  const ingredientNames = (() => {
+                    if (!checked || mode !== 'ingredients' || st?.state !== 'done') return [];
+                    const it = autoFlyerByStore[s.id]?.items;
+                    if (!Array.isArray(it)) return [];
+                    return it
+                      .map((x) => (typeof (x as any)?.name === 'string' ? String((x as any).name) : ''))
+                      .filter((x) => x);
+                  })();
 
                   return (
                     <div
                       key={s.id}
                       className={cx(
-                        'flex items-start justify-between gap-3 rounded-xl border p-3 transition',
+                        'rounded-xl border p-3 transition',
                         checked
                           ? 'border-zinc-500 bg-zinc-800/60'
                           : 'border-zinc-800 bg-zinc-950/40 hover:bg-zinc-900/50'
                       )}
                     >
-                      {/* Left */}
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium">{s.label}</div>
-                        <div className="mt-1 truncate text-xs text-zinc-400">{s.url}</div>
+                      <div className="flex items-start justify-between gap-3">
+                        {/* Left */}
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium">{s.label}</div>
+                          <div className="mt-1 truncate text-xs text-zinc-400">{s.url}</div>
 
-                        {/* 失敗時だけ、簡易メッセージ（入力は止めない） */}
-                        {checked && st?.state === 'error' && (
-                          <div className="mt-2 text-xs text-red-300">{st.message ?? '自動取得に失敗しました'}</div>
-                        )}
-                      </div>
-
-                      {/* Right (spinner / status) */}
-                      <div className="ml-3 flex shrink-0 flex-col items-end gap-2">
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleAutoFetchMode(s.id, 'all')}
-                            disabled={isLoading || isDone}
-                            className={cx(
-                              'rounded-full border px-3 py-1 text-xs transition',
-                              !isLoading && !isDone
-                                ? 'border-zinc-700 bg-zinc-900/60 text-zinc-100 hover:bg-zinc-800'
-                                : 'cursor-not-allowed border-zinc-800 bg-zinc-900/40 text-zinc-500'
-                            )}
-                          >
-                            {isAllActive && isLoading ? '抽出中…' : 'チラシ全体'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleAutoFetchMode(s.id, 'ingredients')}
-                            disabled={isLoading || isDone}
-                            className={cx(
-                              'rounded-full border px-3 py-1 text-xs transition',
-                              !isLoading && !isDone
-                                ? 'border-emerald-800/60 bg-emerald-950/30 text-emerald-200 hover:bg-emerald-900/40'
-                                : 'cursor-not-allowed border-zinc-800 bg-zinc-900/40 text-zinc-500'
-                            )}
-                          >
-                            {isIngredientsActive && isLoading ? '抽出中…' : '食材だけ'}
-                          </button>
+                          {/* 失敗時だけ、簡易メッセージ（入力は止めない） */}
+                          {checked && st?.state === 'error' && (
+                            <div className="mt-2 text-xs text-red-300">{st.message ?? '自動取得に失敗しました'}</div>
+                          )}
                         </div>
 
-                        {checked && st?.state === 'done' && (
-                          <span className="rounded-full border border-zinc-700 bg-zinc-900/60 px-2 py-1 text-xs text-zinc-200">
-                            {count}件
-                          </span>
-                        )}
+                        {/* Right (spinner / status) */}
+                        <div className="ml-3 flex shrink-0 flex-col items-end gap-2">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleAutoFetchMode(s.id, 'all')}
+                              disabled={isLoading || isDone}
+                              className={cx(
+                                'rounded-full border px-3 py-1 text-xs transition',
+                                !isLoading && !isDone
+                                  ? 'border-zinc-700 bg-zinc-900/60 text-zinc-100 hover:bg-zinc-800'
+                                  : 'cursor-not-allowed border-zinc-800 bg-zinc-900/40 text-zinc-500'
+                              )}
+                            >
+                              {isAllActive && isLoading ? '抽出中…' : 'チラシ全体'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleAutoFetchMode(s.id, 'ingredients')}
+                              disabled={isLoading || isDone}
+                              className={cx(
+                                'rounded-full border px-3 py-1 text-xs transition',
+                                !isLoading && !isDone
+                                  ? 'border-emerald-800/60 bg-emerald-950/30 text-emerald-200 hover:bg-emerald-900/40'
+                                  : 'cursor-not-allowed border-zinc-800 bg-zinc-900/40 text-zinc-500'
+                              )}
+                            >
+                              {isIngredientsActive && isLoading ? '抽出中…' : '食材だけ'}
+                            </button>
+                          </div>
 
-                        {checked && st?.state === 'error' && (
-                          <span className="rounded-full border border-red-900/60 bg-red-950/20 px-2 py-1 text-xs text-red-200">
-                            !
-                          </span>
-                        )}
+                          {checked && st?.state === 'done' && (
+                            <span className="rounded-full border border-zinc-700 bg-zinc-900/60 px-2 py-1 text-xs text-zinc-200">
+                              {count}件
+                            </span>
+                          )}
+
+                          {checked && st?.state === 'error' && (
+                            <span className="rounded-full border border-red-900/60 bg-red-950/20 px-2 py-1 text-xs text-red-200">
+                              !
+                            </span>
+                          )}
+                        </div>
                       </div>
+
+                      {ingredientNames.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-emerald-900/40 bg-emerald-950/15 p-3 text-xs text-emerald-100">
+                          <div className="font-semibold text-emerald-200">食材</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {ingredientNames.map((name, i) => (
+                              <span
+                                key={`${name}-${i}`}
+                                className="rounded-full border border-emerald-800/60 bg-emerald-950/20 px-2 py-1 text-[11px]"
+                              >
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
