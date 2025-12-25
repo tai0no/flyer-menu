@@ -75,7 +75,7 @@ const STORES: Store[] = [
 const AUTO_MAX_TILES = 80;
 const AUTO_MAX_TILES_LIGHT = 40;
 const AUTO_MAX_URLS_LIGHT = 2;
-const AUTO_TILE_CHUNK = 5;
+const AUTO_TILE_CHUNK = 3;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -134,6 +134,13 @@ export default function Page() {
     aoba_oshima: null,
     itoyokado_kawasaki: null,
   });
+  const [autoProgressByStore, setAutoProgressByStore] = useState<
+    Record<Store['id'], { items: number; tileStart: number | null; tiles: number }>
+  >({
+    life_kawasaki_oshima: { items: 0, tileStart: null, tiles: 0 },
+    aoba_oshima: { items: 0, tileStart: null, tiles: 0 },
+    itoyokado_kawasaki: { items: 0, tileStart: null, tiles: 0 },
+  });
 
   const abortRef = useRef<Partial<Record<Store['id'], AbortController>>>({});
 
@@ -164,6 +171,10 @@ export default function Page() {
     setAutoModeByStore((prevMode) => ({
       ...prevMode,
       [storeId]: 'all',
+    }));
+    setAutoProgressByStore((prev) => ({
+      ...prev,
+      [storeId]: { items: 0, tileStart: 0, tiles: 0 },
     }));
 
     try {
@@ -278,6 +289,14 @@ export default function Page() {
         if (Array.isArray(eJson.items)) mergedItems.push(...eJson.items);
         lastJson = eJson;
         tileStart = typeof eJson.nextTileStart === 'number' ? eJson.nextTileStart : null;
+        setAutoProgressByStore((prev) => ({
+          ...prev,
+          [storeId]: {
+            items: mergedItems.length,
+            tileStart,
+            tiles: typeof eJson.meta?.tiles === 'number' ? eJson.meta.tiles : prev[storeId]?.tiles ?? 0,
+          },
+        }));
       }
 
       const mergedResult: FlyerExtractResponse = {
@@ -321,6 +340,10 @@ export default function Page() {
     setAutoModeByStore((prevMode) => ({
       ...prevMode,
       [storeId]: 'ingredients',
+    }));
+    setAutoProgressByStore((prev) => ({
+      ...prev,
+      [storeId]: { items: 0, tileStart: 0, tiles: 0 },
     }));
 
     try {
@@ -430,6 +453,14 @@ export default function Page() {
         if (Array.isArray(eJson.items)) mergedItems.push(...eJson.items);
         lastJson = eJson;
         tileStart = typeof eJson.nextTileStart === 'number' ? eJson.nextTileStart : null;
+        setAutoProgressByStore((prev) => ({
+          ...prev,
+          [storeId]: {
+            items: mergedItems.length,
+            tileStart,
+            tiles: typeof eJson.meta?.tiles === 'number' ? eJson.meta.tiles : prev[storeId]?.tiles ?? 0,
+          },
+        }));
       }
 
       const mergedResult: FlyerExtractResponse = {
@@ -675,6 +706,11 @@ export default function Page() {
       aoba_oshima: null,
       itoyokado_kawasaki: null,
     });
+    setAutoProgressByStore({
+      life_kawasaki_oshima: { items: 0, tileStart: null, tiles: 0 },
+      aoba_oshima: { items: 0, tileStart: null, tiles: 0 },
+      itoyokado_kawasaki: { items: 0, tileStart: null, tiles: 0 },
+    });
   };
 
   const flyerItemsCount = Array.isArray(flyerResult?.items) ? flyerResult!.items!.length : 0;
@@ -717,6 +753,7 @@ export default function Page() {
                   const isDone = st?.state === 'done';
                   const isAllActive = mode === 'all';
                   const isIngredientsActive = mode === 'ingredients';
+                  const progress = autoProgressByStore[s.id];
                   const ingredientNames = (() => {
                     if (!checked || mode !== 'ingredients' || st?.state !== 'done') return [];
                     const it = autoFlyerByStore[s.id]?.items;
@@ -805,6 +842,15 @@ export default function Page() {
                                 {name}
                               </span>
                             ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {checked && isLoading && (
+                        <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950/30 p-3 text-xs text-zinc-300">
+                          <div className="font-semibold text-zinc-200">抽出進捗</div>
+                          <div className="mt-2">
+                            items: {progress?.items ?? 0} / tiles: {progress?.tileStart ?? 0} / {progress?.tiles ?? 0}
                           </div>
                         </div>
                       )}
