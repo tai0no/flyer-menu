@@ -856,9 +856,22 @@ export default function Page() {
 
                       {checked && isLoading && (
                         <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950/30 p-3 text-xs text-zinc-300">
-                          <div className="font-semibold text-zinc-200">抽出進捗</div>
-                          <div className="mt-2">
-                            items: {progress?.items ?? 0} / tiles: {progress?.tileStart ?? 0} / {progress?.tiles ?? 0}
+                          <div className="font-semibold text-zinc-200">抽出進捗：{progress?.items ?? 0} 点</div>
+                          <div className="mt-2 h-2 w-full overflow-hidden rounded-full border border-zinc-700 bg-zinc-900/60">
+                            <div
+                              className="h-full rounded-full bg-emerald-300/80"
+                              style={{
+                                width: `${Math.min(
+                                  100,
+                                  Math.max(
+                                    4,
+                                    progress?.tiles
+                                      ? Math.round(((progress?.tileStart ?? 0) / progress.tiles) * 100)
+                                      : 6
+                                  )
+                                )}%`,
+                              }}
+                            />
                           </div>
                         </div>
                       )}
