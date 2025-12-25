@@ -73,6 +73,8 @@ const STORES: Store[] = [
 ];
 
 const AUTO_MAX_TILES = 80;
+const AUTO_MAX_TILES_LIGHT = 40;
+const AUTO_MAX_URLS_LIGHT = 2;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -242,10 +244,15 @@ export default function Page() {
       }
 
       // 3) extract-url（URL画像/PDFをサーバーが取得→Gemini抽出）
+      const maxTiles = storeId === 'life_kawasaki_oshima' || storeId === 'aoba_oshima' ? AUTO_MAX_TILES_LIGHT : AUTO_MAX_TILES;
+      if (storeId === 'life_kawasaki_oshima' || storeId === 'aoba_oshima') {
+        urls.length = Math.min(urls.length, AUTO_MAX_URLS_LIGHT);
+      }
+
       const eRes = await fetch('/api/flyer/extract-url', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ storeId, urls, mode: 'all', maxTiles: AUTO_MAX_TILES }),
+        body: JSON.stringify({ storeId, urls, mode: 'all', maxTiles }),
         signal: ac.signal,
       });
 
@@ -366,10 +373,15 @@ export default function Page() {
         return;
       }
 
+      const maxTiles = storeId === 'life_kawasaki_oshima' || storeId === 'aoba_oshima' ? AUTO_MAX_TILES_LIGHT : AUTO_MAX_TILES;
+      if (storeId === 'life_kawasaki_oshima' || storeId === 'aoba_oshima') {
+        urls.length = Math.min(urls.length, AUTO_MAX_URLS_LIGHT);
+      }
+
       const eRes = await fetch('/api/flyer/extract-url', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ storeId, urls, mode: 'ingredients', maxTiles: AUTO_MAX_TILES }),
+        body: JSON.stringify({ storeId, urls, mode: 'ingredients', maxTiles }),
         signal: ac.signal,
       });
 
