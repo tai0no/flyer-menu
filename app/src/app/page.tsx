@@ -10,8 +10,13 @@ type Store = {
 
 type MenuDay = {
   dayLabel: string;
-  title: string;
-  points: string[];
+  meals: Array<{
+    mealLabel: string;
+    title: string;
+    summary: string;
+    ingredients: string[];
+    steps: string[];
+  }>;
   suggestedIngredients: string[];
 };
 
@@ -72,6 +77,16 @@ const STORES: Store[] = [
   },
 ];
 
+const DAY_OPTIONS = Array.from({ length: 7 }, (_, i) => {
+  const days = i + 1;
+  return { value: days, label: `${days}日分(${days * 3}食)` };
+});
+
+const PEOPLE_OPTIONS = Array.from({ length: 5 }, (_, i) => {
+  const count = i + 1;
+  return { value: count, label: `${count}人` };
+});
+
 const AUTO_MAX_TILES = 80;
 const AUTO_MAX_TILES_LIGHT = 40;
 const AUTO_MAX_URLS_LIGHT = 2;
@@ -79,6 +94,44 @@ const AUTO_TILE_CHUNK = 3;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
+}
+
+function formatYen(value: number) {
+  return `${new Intl.NumberFormat('ja-JP').format(value)}円`;
+}
+
+function normalizePricedItem(raw: unknown): { name: string; priceYen: number; unit?: string } | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const name = typeof obj.name === 'string' ? obj.name.trim() : '';
+  if (!name) return null;
+  const rawPrice = obj.priceYen ?? obj.price;
+  let priceYen = NaN;
+  if (typeof rawPrice === 'number') {
+    priceYen = rawPrice;
+  } else if (typeof rawPrice === 'string') {
+    const m = rawPrice.replace(/,/g, '').match(/\d+/);
+    priceYen = m ? Number(m[0]) : NaN;
+  }
+  if (!Number.isFinite(priceYen) || priceYen <= 0) return null;
+  const unit = typeof obj.unit === 'string' && obj.unit.trim() ? obj.unit.trim() : undefined;
+  return { name, priceYen, unit };
+}
+
+function normalizeMatchToken(s: string) {
+  return s
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[（）()\[\]【】「」『』・,，.．。:：/／]/g, '');
+}
+
+function stripToCoreName(name: string) {
+  return name
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/[0-9０-９]+(?:g|kg|ml|l|個|本|枚|袋|パック|尾|束|切|合)/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function Spinner({ title }: { title?: string }) {
@@ -106,6 +159,8 @@ export default function Page() {
   const [selectedStoreIds, setSelectedStoreIds] = useState<Set<Store['id']>>(new Set());
   const [fridgeText, setFridgeText] = useState('');
   const [requestText, setRequestText] = useState('');
+  const [selectedPeople, setSelectedPeople] = useState(1);
+  const [selectedDays, setSelectedDays] = useState(1);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<MenuDay[] | null>(null);
@@ -555,6 +610,8 @@ export default function Page() {
           stores: selectedStores, // label/url もサーバーへ渡す
           fridgeText,
           requestText,
+          days: selectedDays,
+          people: selectedPeople,
           flyerItems: [...autoItems, ...uploadItems],
         }),
       });
@@ -685,6 +742,8 @@ export default function Page() {
     setResult(null);
     setFridgeText('');
     setRequestText('');
+    setSelectedPeople(1);
+    setSelectedDays(1);
     setSelectedStoreIds(new Set());
 
     // 実行中の自動取得を全部中断
@@ -729,6 +788,31 @@ export default function Page() {
   const flyerIngredientWarnings = Array.isArray(flyerIngredientResult?.warnings)
     ? (flyerIngredientResult!.warnings as string[])
     : [];
+  const wantedIngredientTokens = Array.from(
+    new Set(
+      (result ?? [])
+        .flatMap((d) => d.suggestedIngredients)
+        .map((x) => normalizeMatchToken(stripToCoreName(x)))
+        .filter((x) => x.length >= 2)
+    )
+  );
+  const buyListByStore = selectedStores.map((store) => {
+    const rawItems = autoFlyerByStore[store.id]?.items;
+    const items = Array.isArray(rawItems)
+      ? rawItems
+          .map((it) => normalizePricedItem(it))
+          .filter((it): it is NonNullable<typeof it> => Boolean(it))
+          .filter((it) => {
+            if (wantedIngredientTokens.length === 0) return false;
+            const itemToken = normalizeMatchToken(stripToCoreName(it.name));
+            if (!itemToken) return false;
+            return wantedIngredientTokens.some((token) => itemToken.includes(token) || token.includes(itemToken));
+          })
+      : [];
+    const subtotal = items.reduce((sum, it) => sum + it.priceYen, 0);
+    return { store, items, subtotal };
+  });
+  const buyListTotal = buyListByStore.reduce((sum, s) => sum + s.subtotal, 0);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-50">
@@ -762,14 +846,6 @@ export default function Page() {
                   const isAllActive = mode === 'all';
                   const isIngredientsActive = mode === 'ingredients';
                   const progress = autoProgressByStore[s.id];
-                  const ingredientNames = (() => {
-                    if (!checked || mode !== 'ingredients' || st?.state !== 'done') return [];
-                    const it = autoFlyerByStore[s.id]?.items;
-                    if (!Array.isArray(it)) return [];
-                    return it
-                      .map((x) => (typeof (x as any)?.name === 'string' ? String((x as any).name) : ''))
-                      .filter((x) => x);
-                  })();
 
                   return (
                     <div
@@ -838,22 +914,6 @@ export default function Page() {
                         </div>
                       </div>
 
-                      {ingredientNames.length > 0 && (
-                        <div className="mt-3 rounded-xl border border-emerald-900/40 bg-emerald-950/15 p-3 text-xs text-emerald-100">
-                          <div className="font-semibold text-emerald-200">食材</div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {ingredientNames.map((name, i) => (
-                              <span
-                                key={`${name}-${i}`}
-                                className="rounded-full border border-emerald-800/60 bg-emerald-950/20 px-2 py-1 text-[11px]"
-                              >
-                                {name}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
                       {checked && isLoading && (
                         <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950/30 p-3 text-xs text-zinc-300">
                           <div className="font-semibold text-zinc-200">抽出進捗：{progress?.items ?? 0} 点</div>
@@ -889,17 +949,47 @@ export default function Page() {
               <label className="text-sm font-medium text-zinc-200">冷蔵庫の中身（複数行）</label>
               <textarea
                 className="mt-2 h-28 w-full rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 text-sm outline-none focus:border-zinc-500"
-                placeholder="例: ニンジン2本&#10;大根1本"
+                placeholder="例: ニンジン2本（分量を記載）&#10;豚こま300g（分量を記載）"
                 value={fridgeText}
                 onChange={(e) => setFridgeText(e.target.value)}
               />
             </div>
 
             <div className="mt-6">
+              <label className="text-sm font-medium text-zinc-200">人数</label>
+              <select
+                className="mt-2 w-full rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 text-sm outline-none focus:border-zinc-500"
+                value={selectedPeople}
+                onChange={(e) => setSelectedPeople(parseInt(e.target.value, 10))}
+              >
+                {PEOPLE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-6">
+              <label className="text-sm font-medium text-zinc-200">献立日数</label>
+              <select
+                className="mt-2 w-full rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 text-sm outline-none focus:border-zinc-500"
+                value={selectedDays}
+                onChange={(e) => setSelectedDays(parseInt(e.target.value, 10))}
+              >
+                {DAY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-6">
               <label className="text-sm font-medium text-zinc-200">要望（複数行）</label>
               <textarea
                 className="mt-2 h-28 w-full rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 text-sm outline-none focus:border-zinc-500"
-                placeholder="例: 3日分の献立を考えてください&#10;普通の主婦にもできるメニューにしてください"
+                placeholder="例: 時短で作れる献立にしてください&#10;普通の主婦にもできるメニューにしてください"
                 value={requestText}
                 onChange={(e) => setRequestText(e.target.value)}
               />
@@ -1070,32 +1160,84 @@ export default function Page() {
                       <div className="text-xs text-zinc-400">MVP</div>
                     </div>
 
-                    <div className="mt-2 text-base font-medium">{d.title}</div>
+                    <div className="mt-3 space-y-4">
+                      {d.meals.map((meal, idx) => (
+                        <div key={`${meal.mealLabel}-${idx}`} className="rounded-xl border border-zinc-800/70 bg-zinc-950/40 p-3">
+                          <div className="text-xs font-semibold text-zinc-300">{meal.mealLabel}</div>
+                          <div className="mt-2 text-base font-medium">{meal.title}</div>
+                          <div className="mt-1 text-sm text-zinc-300">{meal.summary}</div>
 
-                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-zinc-200">
-                      {d.points.map((p, i) => (
-                        <li key={i}>{p}</li>
+                          <details className="mt-2 rounded-lg border border-zinc-800/60 bg-zinc-950/40 px-3 py-2">
+                            <summary className="cursor-pointer text-xs font-medium text-zinc-200">
+                              詳細
+                            </summary>
+                            <div className="mt-2">
+                              <div className="text-xs font-semibold text-zinc-300">食材</div>
+                              <div className="mt-1 flex flex-wrap gap-2 text-xs text-zinc-200">
+                                {meal.ingredients.map((item, iidx) => (
+                                  <span
+                                    key={`${item}-${iidx}`}
+                                    className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2 py-1"
+                                  >
+                                    {item}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="mt-3">
+                              <div className="text-xs font-semibold text-zinc-300">手順</div>
+                              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-zinc-200">
+                                {meal.steps.map((step, sidx) => (
+                                  <li key={sidx}>{step}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </details>
+                        </div>
                       ))}
-                    </ul>
-
-                    <div className="mt-4">
-                      <div className="text-xs font-medium text-zinc-300">買い足し候補</div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {d.suggestedIngredients.map((x) => (
-                          <span
-                            key={x}
-                            className="rounded-full border border-zinc-700 bg-zinc-900/60 px-3 py-1 text-xs text-zinc-200"
-                          >
-                            {x}
-                          </span>
-                        ))}
-                      </div>
                     </div>
                   </div>
                 ))}
 
                 <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3 text-xs text-zinc-400">
                   次は「チラシ取得（Webのresolve対応）→ Gemini 解析 → 献立精度アップ」に繋げます。
+                </div>
+
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/30 p-4">
+                  <div className="text-sm font-semibold">スーパーで買うものリスト</div>
+                  <div className="mt-1 text-xs text-zinc-400">チラシから価格付き商品のみ集計</div>
+
+                  <div className="mt-4 space-y-4">
+                    {buyListByStore.map((group) => (
+                      <div key={group.store.id} className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-medium">{group.store.label}</div>
+                          <div className="text-sm text-zinc-200">小計: {formatYen(group.subtotal)}</div>
+                        </div>
+
+                        {group.items.length === 0 ? (
+                          <div className="mt-2 text-xs text-zinc-400">商品がありません（チラシ未取得の可能性）</div>
+                        ) : (
+                          <ul className="mt-3 space-y-2 text-sm text-zinc-200">
+                            {group.items.map((it, idx) => (
+                              <li key={`${it.name}-${it.priceYen}-${idx}`} className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="truncate">{it.name}</div>
+                                  {it.unit && <div className="text-xs text-zinc-400">{it.unit}</div>}
+                                </div>
+                                <div className="shrink-0 text-sm text-zinc-100">{formatYen(it.priceYen)}</div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between border-t border-zinc-800 pt-3 text-sm font-semibold">
+                    <span>合計</span>
+                    <span>{formatYen(buyListTotal)}</span>
+                  </div>
                 </div>
               </div>
             )}

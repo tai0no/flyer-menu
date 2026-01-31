@@ -17,6 +17,14 @@ function envOrThrow(key: string) {
   return v;
 }
 
+function clampDays(n: number) {
+  return Math.max(1, Math.min(7, Math.trunc(n)));
+}
+
+function clampPeople(n: number) {
+  return Math.max(1, Math.min(5, Math.trunc(n)));
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Partial<PlanRequestBody>;
@@ -25,6 +33,34 @@ export async function POST(req: Request) {
     const fridgeText = typeof body.fridgeText === 'string' ? body.fridgeText : '';
     const requestText = typeof body.requestText === 'string' ? body.requestText : '';
     const flyerItems = Array.isArray(body.flyerItems) ? body.flyerItems : undefined;
+    const rawDays = (body as { days?: unknown }).days;
+    const rawPeople = (body as { people?: unknown }).people;
+    let daysOverride: number | null = null;
+    let peopleOverride: number | null = null;
+
+    if (typeof rawDays === 'number' && Number.isInteger(rawDays)) {
+      daysOverride = rawDays;
+    } else if (typeof rawDays === 'string' && rawDays.trim() !== '' && Number.isInteger(Number(rawDays))) {
+      daysOverride = Number(rawDays);
+    } else if (rawDays != null) {
+      return NextResponse.json({ error: '日数の指定が不正です。' }, { status: 400 });
+    }
+
+    if (daysOverride != null) {
+      daysOverride = clampDays(daysOverride);
+    }
+
+    if (typeof rawPeople === 'number' && Number.isInteger(rawPeople)) {
+      peopleOverride = rawPeople;
+    } else if (typeof rawPeople === 'string' && rawPeople.trim() !== '' && Number.isInteger(Number(rawPeople))) {
+      peopleOverride = Number(rawPeople);
+    } else if (rawPeople != null) {
+      return NextResponse.json({ error: '人数の指定が不正です。' }, { status: 400 });
+    }
+
+    if (peopleOverride != null) {
+      peopleOverride = clampPeople(peopleOverride);
+    }
 
     if (stores.length === 0) {
       return NextResponse.json({ error: 'スーパーを1つ以上選んでください。' }, { status: 400 });
@@ -42,13 +78,16 @@ export async function POST(req: Request) {
     const temperature = Number(process.env.GEMINI_TEMPERATURE || 0.7);
 
     const inferred = inferConstraintsFromRequest(requestText);
+    const days = daysOverride ?? inferred.days;
+    const people = peopleOverride ?? 1;
 
     const prompt = buildPlanPrompt({
       stores,
       fridgeText,
       requestText,
       flyerItems,
-      days: inferred.days,
+      days,
+      people,
       difficulty: inferred.difficulty,
     });
 
@@ -66,11 +105,12 @@ export async function POST(req: Request) {
     const text = result.response.text();
 
     // strict: 日数は inferred.days と一致させる（ズレたら弾く）
-    const parsed = parsePlanFromModelText(text, inferred.days);
+    const parsed = parsePlanFromModelText(text, days);
 
     // metaに推定理由を入れて返す（UIで出してもいいし、隠してもOK）
-    parsed.meta.derivedFromRequest = inferred.derivedFromRequest;
-    parsed.meta.reason = inferred.reason;
+    parsed.meta.derivedFromRequest = daysOverride == null ? inferred.derivedFromRequest : false;
+    parsed.meta.reason =
+      daysOverride == null ? inferred.reason : inferred.reason.replace(/days=[^,]+/, `days=ui:${days}`);
 
     return NextResponse.json(parsed);
   } catch (e: any) {

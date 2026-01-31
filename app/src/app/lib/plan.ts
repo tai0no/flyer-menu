@@ -18,13 +18,18 @@ export type FlyerItem = {
 
 export type MenuDay = {
   dayLabel: string; // "1日目" など
-  title: string;
-  points: string[];
+  meals: Array<{
+    mealLabel: string; // 朝食/昼食/夕食
+    title: string;
+    summary: string;
+    ingredients: string[];
+    steps: string[];
+  }>;
   suggestedIngredients: string[];
 };
 
 export type PlanMeta = {
-  days: number; // 1..14
+  days: number; // 1..7
   difficulty: Difficulty;
   derivedFromRequest: boolean; // 要望から推定したか
   reason?: string; // どう推定したか（デバッグ用）
@@ -40,6 +45,8 @@ export type PlanRequestBody = {
   fridgeText: string;
   requestText: string;
   flyerItems?: FlyerItem[]; // まだ未接続なら省略でOK
+  days?: number; // 1..7
+  people?: number; // 1..5
 };
 
 function toHalfWidthDigits(s: string) {
@@ -51,7 +58,7 @@ function normalizeText(s: string) {
 }
 
 function kanjiNumberToInt(kanji: string): number | null {
-  // 対応範囲: 1..14 を想定（必要なら拡張）
+  // 対応範囲: 1..14 を想定（最終的な上限は 7 に丸める）
   const table: Record<string, number> = {
     一: 1,
     二: 2,
@@ -92,7 +99,7 @@ export function inferConstraintsFromRequest(requestText: string): {
   {
     const m = raw.match(/(\d+)\s*(日|日分|日間)/);
     if (m) {
-      days = clampInt(parseInt(m[1], 10), 1, 14);
+      days = clampInt(parseInt(m[1], 10), 1, 7);
       reasonDays = `digits:${m[0]}`;
     }
   }
@@ -102,7 +109,7 @@ export function inferConstraintsFromRequest(requestText: string): {
     const m = raw.match(/(\d+)\s*週間/);
     if (m) {
       const w = parseInt(m[1], 10);
-      days = clampInt(w * 7, 1, 14);
+      days = clampInt(w * 7, 1, 7);
       reasonDays = `weeks:${m[0]}`;
     } else if (raw.includes('一週間')) {
       days = 7;
@@ -116,7 +123,7 @@ export function inferConstraintsFromRequest(requestText: string): {
     if (m) {
       const n = kanjiNumberToInt(m[1]);
       if (n != null) {
-        days = clampInt(n, 1, 14);
+        days = clampInt(n, 1, 7);
         reasonDays = `kanji:${m[0]}`;
       }
     }
@@ -124,8 +131,8 @@ export function inferConstraintsFromRequest(requestText: string): {
 
   // default
   if (days == null) {
-    days = 3;
-    reasonDays = 'default:3';
+    days = 1;
+    reasonDays = 'default:1';
   }
 
   // ---- difficulty ----
@@ -194,9 +201,10 @@ export function buildPlanPrompt(args: {
   requestText: string;
   flyerItems?: FlyerItem[];
   days: number;
+  people: number;
   difficulty: Difficulty;
 }): string {
-  const { stores, fridgeText, requestText, flyerItems, days, difficulty } = args;
+  const { stores, fridgeText, requestText, flyerItems, days, people, difficulty } = args;
 
   const storeBlock = stores.map((s) => `- ${s.label} (${s.url})`).join('\n');
   const fridgeLines = normalizeText(fridgeText)
@@ -221,8 +229,11 @@ export function buildPlanPrompt(args: {
 - 出力は **必ず** JSONのみ（Markdown禁止、コードフェンス禁止）。
 - menuDays は **必ず ${days} 件**。
 - 難易度 difficulty は "${difficulty}"。
-- 1日あたり：主菜 + 副菜 + 汁物（or 主菜+副菜でも可）。家庭向け。
-- points は箇条書きの短文。最大8個まで。
+- 1日あたり：朝食/昼食/夕食の3つ。家庭向け。
+- summary は1行の短文（30字程度）でコツや特徴を書く。
+- ingredients はその献立で使う食材と分量のセット（例: "豆腐(1/2パック)"）。最大8個まで。
+- steps は箇条書きの短文。最大6個まで。
+- 材料の分量（容量/重さ/個数）を必ず考慮し、必要量の目安を steps に含める。
 - suggestedIngredients は「買い足し候補」。最大12個まで。
 
 # 難易度の解釈
@@ -236,6 +247,9 @@ ${storeBlock}
 
 ## 冷蔵庫の中身（ユーザー入力）
 ${fridgeLines.map((x) => `- ${x}`).join('\n')}
+
+## 人数
+${people}人
 
 ## 要望（ユーザー入力）
 ${reqLines.map((x) => `- ${x}`).join('\n')}
@@ -254,8 +268,15 @@ ${flyerBlock}` : ''}
   "menuDays": [
     {
       "dayLabel": string,
-      "title": string,
-      "points": string[],
+      "meals": [
+        {
+          "mealLabel": "朝食" | "昼食" | "夕食",
+          "title": string,
+          "summary": string,
+          "ingredients": string[],
+          "steps": string[]
+        }
+      ],
       "suggestedIngredients": string[]
     }
   ]
@@ -265,6 +286,7 @@ ${flyerBlock}` : ''}
 - dayLabel は "1日目" から連番。
 - 冷蔵庫の食材を優先して使い、足りないものを suggestedIngredients に入れる。
 - チラシがある場合、suggestedIngredients はチラシ由来を優先する。
+- meals は必ず "朝食", "昼食", "夕食" の順で出す。
 `.trim();
 }
 
@@ -297,7 +319,7 @@ export function validatePlanResponse(obj: unknown, expectedDays?: number): PlanR
   if (!Number.isInteger(o.meta.days)) throw new Error('meta.days must be integer');
   if (!isDifficulty(o.meta.difficulty)) throw new Error('meta.difficulty invalid');
 
-  const days = clampInt(o.meta.days, 1, 14);
+  const days = clampInt(o.meta.days, 1, 7);
 
   if (!Array.isArray(o.menuDays)) throw new Error('menuDays must be array');
 
@@ -311,13 +333,29 @@ export function validatePlanResponse(obj: unknown, expectedDays?: number): PlanR
   const menuDays: MenuDay[] = o.menuDays.map((d: any, idx: number) => {
     if (typeof d !== 'object' || d == null) throw new Error(`menuDays[${idx}] is not object`);
     if (typeof d.dayLabel !== 'string') throw new Error(`menuDays[${idx}].dayLabel missing`);
-    if (typeof d.title !== 'string') throw new Error(`menuDays[${idx}].title missing`);
-    assertStringArray(d.points, `menuDays[${idx}].points`);
+    if (!Array.isArray(d.meals)) throw new Error(`menuDays[${idx}].meals must be array`);
+    if (d.meals.length !== 3) throw new Error(`menuDays[${idx}].meals must have 3 items`);
+    const meals = d.meals.map((m: any, midx: number) => {
+      if (typeof m !== 'object' || m == null) throw new Error(`menuDays[${idx}].meals[${midx}] is not object`);
+      if (typeof m.mealLabel !== 'string') {
+        throw new Error(`menuDays[${idx}].meals[${midx}].mealLabel missing`);
+      }
+      if (typeof m.title !== 'string') throw new Error(`menuDays[${idx}].meals[${midx}].title missing`);
+      if (typeof m.summary !== 'string') throw new Error(`menuDays[${idx}].meals[${midx}].summary missing`);
+      assertStringArray(m.ingredients, `menuDays[${idx}].meals[${midx}].ingredients`);
+      assertStringArray(m.steps, `menuDays[${idx}].meals[${midx}].steps`);
+      return {
+        mealLabel: m.mealLabel,
+        title: m.title,
+        summary: m.summary,
+        ingredients: m.ingredients.slice(0, 8),
+        steps: m.steps.slice(0, 6),
+      };
+    });
     assertStringArray(d.suggestedIngredients, `menuDays[${idx}].suggestedIngredients`);
     return {
       dayLabel: d.dayLabel,
-      title: d.title,
-      points: d.points.slice(0, 8),
+      meals,
       suggestedIngredients: d.suggestedIngredients.slice(0, 12),
     };
   });
